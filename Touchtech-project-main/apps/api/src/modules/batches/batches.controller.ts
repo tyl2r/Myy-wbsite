@@ -32,7 +32,7 @@ export class BatchesController {
   constructor(private readonly batches: BatchesService) {}
 
   @Get('nearby')
-  nearby(@Query(new ZodValidationPipe(nearbySchema)) q: z.infer<typeof nearbySchema>) {
+  nearby(@Query(new ZodValidationPipe(nearbySchema)) q: z.infer<typeof nearbySchema>): any {
     return this.batches.nearby({ lat: q.lat, lng: q.lng }, q.radius, q.limit);
   }
 
