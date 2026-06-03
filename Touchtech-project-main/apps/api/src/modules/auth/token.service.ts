@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes, createHash } from 'node:crypto';
-import { UserRole } from '@prisma/client';
+import { UserRole } from '../../generated/prisma';
 
 export interface AccessClaims {
   sub: string;

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, RequestStatus } from '@prisma/client';
+import { Prisma, RequestStatus } from '../../generated/prisma';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateRequestDto } from './dto/request.dto';
 import { haversineMeters } from '../../common/geo/geo.util';
