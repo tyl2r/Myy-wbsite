@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '../../generated/prisma';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RedisPresenceService } from './redis-presence.service';
 import { LatLng } from '../../common/geo/geo.util';

@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { PrismaClient, Prisma } from '../src/generated/prisma';
+import { PrismaClient, Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
 
 /**

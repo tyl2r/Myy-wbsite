@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, RequestStatus, UserRole, WorkerVerification } from '../../generated/prisma';
+import { Prisma, RequestStatus, UserRole, WorkerVerification } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
   ConflictError,
