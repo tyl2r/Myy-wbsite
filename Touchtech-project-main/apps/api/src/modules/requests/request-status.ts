@@ -1,4 +1,4 @@
-import { RequestStatus } from '@prisma/client';
+import { RequestStatus } from '../../generated/prisma';
 import { InvalidTransitionError } from '../../common/errors/domain.error';
 
 /**
