@@ -36,7 +36,7 @@ describe('Auth flow (e2e)', () => {
     await app.close();
   });
 
-  const inject = (url: string, payload: unknown) =>
+  const inject = (url: string, payload: Record<string, unknown>) =>
     app.inject({ method: 'POST', url, payload });
 
   it('registers a new account and returns a token pair', async () => {

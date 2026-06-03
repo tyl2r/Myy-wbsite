@@ -11,7 +11,7 @@ import { RouteCompatService, RequestLeg } from './route-compat.service';
 import { LatLng } from '../../common/geo/geo.util';
 import { NotificationsService } from '../notifications/notifications.service';
 
-interface NearbyRow {
+export interface NearbyRow {
   id: bigint;
   pickup_lat: number;
   pickup_lng: number;
