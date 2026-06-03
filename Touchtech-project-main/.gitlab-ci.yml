@@ -1,0 +1,215 @@
+# Combined CI/CD pipeline for the RouteShare monorepo.
+# Frontend (apps/web) -> Vercel
+# Backend  (apps/api) -> Railway (via Docker)
+
+stages:
+  - install
+  - verify
+  - test
+  - deploy
+
+variables:
+  PNPM_HOME: '$CI_PROJECT_DIR/.pnpm-store'
+  NEXT_PUBLIC_API_URL: '/api/v1'
+  NEXT_PUBLIC_API_MOCKING: 'enabled'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+default:
+  image: node:20-bookworm-slim
+  tags:
+    - saas-linux-medium-amd64
+
+# ---------------------------------------------------------------------------
+# Frontend (apps/web)
+# ---------------------------------------------------------------------------
+
+web:install:
+  stage: install
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@9 --activate
+    - cd apps/web
+  rules:
+    - changes:
+        - apps/web/**/*
+        - .gitlab-ci.yml
+  script:
+    - pnpm config set store-dir "$PNPM_HOME"
+    - pnpm install --no-frozen-lockfile
+  cache:
+    key:
+      files:
+        - apps/web/package.json
+    paths:
+      - .pnpm-store/
+      - apps/web/node_modules/
+    policy: pull-push
+
+.web_uses_deps:
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@9 --activate
+    - cd apps/web
+  rules:
+    - changes:
+        - apps/web/**/*
+        - .gitlab-ci.yml
+  cache:
+    key:
+      files:
+        - apps/web/package.json
+    paths:
+      - .pnpm-store/
+      - apps/web/node_modules/
+    policy: pull
+  needs:
+    - web:install
+
+web:typecheck:
+  stage: verify
+  extends: .web_uses_deps
+  script:
+    - pnpm typecheck
+
+web:lint:
+  stage: verify
+  extends: .web_uses_deps
+  script:
+    - pnpm lint
+
+web:build:
+  stage: verify
+  extends: .web_uses_deps
+  script:
+    - pnpm build
+
+web:test:
+  stage: test
+  extends: .web_uses_deps
+  script:
+    - pnpm test:coverage
+  coverage: '/All files\s+\|\s+([\d.]+)/'
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: apps/web/coverage/cobertura-coverage.xml
+    expire_in: 1 week
+
+web:deploy:
+  stage: deploy
+  image: node:20-bookworm-slim
+  before_script:
+    - npm install -g vercel
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - apps/web/**/*
+        - vercel.json
+        - .gitlab-ci.yml
+  script:
+    - cd Touchtech-project-main
+    - vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+    - vercel build --prod --token=$VERCEL_TOKEN
+    - vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
+  environment:
+    name: production/web
+    url: $VERCEL_URL
+
+# ---------------------------------------------------------------------------
+# Backend (apps/api)
+# ---------------------------------------------------------------------------
+
+api:install:
+  stage: install
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@9 --activate
+    - cd apps/api
+  rules:
+    - changes:
+        - apps/api/**/*
+        - .gitlab-ci.yml
+  script:
+    - pnpm config set store-dir "$PNPM_HOME"
+    - pnpm install --no-frozen-lockfile
+  cache:
+    key:
+      files:
+        - apps/api/package.json
+    paths:
+      - .pnpm-store/
+      - apps/api/node_modules/
+    policy: pull-push
+
+.api_uses_deps:
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@9 --activate
+    - cd apps/api
+  rules:
+    - changes:
+        - apps/api/**/*
+        - .gitlab-ci.yml
+  cache:
+    key:
+      files:
+        - apps/api/package.json
+    paths:
+      - .pnpm-store/
+      - apps/api/node_modules/
+    policy: pull
+  needs:
+    - api:install
+
+api:lint:
+  stage: verify
+  extends: .api_uses_deps
+  script:
+    - pnpm lint
+
+api:build:
+  stage: verify
+  extends: .api_uses_deps
+  script:
+    - pnpm build
+
+api:test:
+  stage: test
+  extends: .api_uses_deps
+  script:
+    - pnpm test:cov
+  coverage: '/Statements\s*:\s*([\d.]+)/'
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: apps/api/coverage/cobertura-coverage.xml
+    expire_in: 1 week
+
+api:deploy:
+  stage: deploy
+  image: docker:24
+  services:
+    - docker:24-dind
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - apps/api/**/*
+        - .gitlab-ci.yml
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - cd Touchtech-project-main/apps/api
+    - docker build -t $CI_REGISTRY_IMAGE/api:$CI_COMMIT_SHORT_SHA -t $CI_REGISTRY_IMAGE/api:latest .
+    - docker push $CI_REGISTRY_IMAGE/api:$CI_COMMIT_SHORT_SHA
+    - docker push $CI_REGISTRY_IMAGE/api:latest
+    # Trigger Railway redeploy via webhook (set RAILWAY_WEBHOOK_URL in CI vars)
+    - |
+      if [ -n "$RAILWAY_WEBHOOK_URL" ]; then
+        wget -qO- --post-data='' "$RAILWAY_WEBHOOK_URL" || true
+      fi
+  environment:
+    name: production/api

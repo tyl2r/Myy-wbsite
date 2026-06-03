@@ -1,0 +1,351 @@
+// RouteShare delivery-request platform
+// Prisma schema generated from the Phase 2 PostgreSQL + PostGIS design.
+//
+// PostGIS note: Prisma has no native geography type, so spatial columns are
+// declared with `Unsupported("geography(...,4326)")`. They are writable/readable
+// via Prisma raw queries (ST_* functions) and their GiST indexes are created in
+// a follow-up raw-SQL migration (see prisma/migrations). The postgis extension
+// is enabled via the postgresqlExtensions preview feature.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis, citext]
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  admin
+  user
+  worker
+}
+
+enum UserStatus {
+  active
+  suspended
+  deleted
+}
+
+enum WorkerVerification {
+  pending
+  verified
+  rejected
+}
+
+enum VehicleType {
+  bike
+  motorbike
+  car
+  van
+  foot
+}
+
+enum PackageSize {
+  xs
+  s
+  m
+  l
+  xl
+}
+
+enum RequestStatus {
+  created
+  matched
+  accepted
+  picked_up
+  in_transit
+  delivered
+  confirmed
+  cancelled
+  failed
+}
+
+enum BatchStatus {
+  planning
+  active
+  completed
+  cancelled
+}
+
+enum StopStatus {
+  pending
+  arrived
+  picked_up
+  dropped_off
+  skipped
+}
+
+enum NotificationType {
+  status_change
+  assignment
+  message
+  system
+}
+
+enum ProofType {
+  photo
+  signature
+  code
+  none
+}
+
+// ---------------------------------------------------------------------------
+// Identity & profiles
+// ---------------------------------------------------------------------------
+
+model User {
+  id           BigInt     @id @default(autoincrement())
+  email        String     @unique @db.Citext
+  passwordHash String     @map("password_hash")
+  role         UserRole   @default(user)
+  status       UserStatus @default(active)
+  fullName     String     @map("full_name")
+  phone        String?
+  ratingAvg    Decimal    @default(0.00) @map("rating_avg") @db.Decimal(3, 2)
+  ratingCount  Int        @default(0) @map("rating_count")
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workerProfile  WorkerProfile?
+  addresses      Address[]
+  requests       Request[]
+  batches        Batch[]
+  sessions       Session[]
+  notifications  Notification[]
+  locationPings  LocationPing[]
+  statusEvents   StatusEvent[]    @relation("StatusEventActor")
+  ratingsGiven   Rating[]         @relation("RatingRater")
+  ratingsGot     Rating[]         @relation("RatingRatee")
+  podsCaptured   ProofOfDelivery[]
+  auditLogs      AuditLog[]       @relation("AuditActor")
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model WorkerProfile {
+  userId          BigInt             @id @map("user_id")
+  verification    WorkerVerification @default(pending)
+  vehicle         VehicleType
+  isAvailable     Boolean            @default(false) @map("is_available")
+  currentLocation Unsupported("geography(Point, 4326)")?  @map("current_location")
+  routeCorridor   Unsupported("geography(LineString, 4326)")? @map("route_corridor")
+  maxDetourPct    Int                @default(15) @map("max_detour_pct") @db.SmallInt
+  lastSeenAt      DateTime?          @map("last_seen_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("worker_profiles")
+}
+
+model Address {
+  id         BigInt   @id @default(autoincrement())
+  userId     BigInt   @map("user_id")
+  label      String?
+  line1      String
+  line2      String?
+  city       String
+  postalCode String?  @map("postal_code")
+  geom       Unsupported("geography(Point, 4326)")
+  isDefault  Boolean  @default(false) @map("is_default")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// ---------------------------------------------------------------------------
+// Requests & batching
+// ---------------------------------------------------------------------------
+
+model Request {
+  id             BigInt        @id @default(autoincrement())
+  userId         BigInt        @map("user_id")
+  pickupGeom     Unsupported("geography(Point, 4326)") @map("pickup_geom")
+  pickupText     String        @map("pickup_text")
+  dropoffGeom    Unsupported("geography(Point, 4326)") @map("dropoff_geom")
+  dropoffText    String        @map("dropoff_text")
+  recipientName  String        @map("recipient_name")
+  recipientPhone String?       @map("recipient_phone")
+  packageSize    PackageSize   @map("package_size")
+  notes          String?
+  windowStart    DateTime?     @map("window_start") @db.Timestamptz(6)
+  windowEnd      DateTime?     @map("window_end") @db.Timestamptz(6)
+  status         RequestStatus @default(created)
+  priceCents     Int           @map("price_cents")
+  distanceM      Int?          @map("distance_m")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  batchItem    BatchItem?
+  statusEvents StatusEvent[]
+  proof        ProofOfDelivery?
+  ratings      Rating[]
+
+  @@index([status])
+  @@index([userId])
+  @@map("requests")
+}
+
+model Batch {
+  id             BigInt      @id @default(autoincrement())
+  workerId       BigInt      @map("worker_id")
+  status         BatchStatus @default(planning)
+  stopOrder      Json        @default("[]") @map("stop_order")
+  plannedGeom    Unsupported("geography(LineString, 4326)")? @map("planned_geom")
+  totalDistanceM Int?        @map("total_distance_m")
+  startedAt      DateTime?   @map("started_at") @db.Timestamptz(6)
+  completedAt    DateTime?   @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  worker        User           @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  items         BatchItem[]
+  locationPings LocationPing[]
+
+  @@index([workerId, status])
+  @@map("batches")
+}
+
+model BatchItem {
+  batchId    BigInt     @map("batch_id")
+  requestId  BigInt     @unique @map("request_id")
+  sequence   Int        @db.SmallInt
+  stopStatus StopStatus @default(pending) @map("stop_status")
+
+  batch   Batch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  request Request @relation(fields: [requestId], references: [id], onDelete: Restrict)
+
+  @@id([batchId, requestId])
+  @@index([requestId])
+  @@map("batch_items")
+}
+
+// ---------------------------------------------------------------------------
+// Tracking & status
+// ---------------------------------------------------------------------------
+
+model LocationPing {
+  id         BigInt   @default(autoincrement())
+  workerId   BigInt   @map("worker_id")
+  batchId    BigInt?  @map("batch_id")
+  geom       Unsupported("geography(Point, 4326)")
+  speedMps   Float?   @map("speed_mps") @db.Real
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  worker User   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  batch  Batch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@id([id, recordedAt])
+  @@index([batchId, recordedAt(sort: Desc)])
+  @@map("location_pings")
+}
+
+model StatusEvent {
+  id         BigInt         @id @default(autoincrement())
+  requestId  BigInt         @map("request_id")
+  fromStatus RequestStatus? @map("from_status")
+  toStatus   RequestStatus  @map("to_status")
+  actorId    BigInt?        @map("actor_id")
+  reason     String?
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  request Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  actor   User?   @relation("StatusEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([requestId, createdAt])
+  @@map("status_events")
+}
+
+// ---------------------------------------------------------------------------
+// Proof, ratings, notifications, sessions, audit
+// ---------------------------------------------------------------------------
+
+model ProofOfDelivery {
+  requestId    BigInt    @id @map("request_id")
+  type         ProofType @default(none)
+  photoUrl     String?   @map("photo_url")
+  signatureUrl String?   @map("signature_url")
+  codeVerified Boolean?  @map("code_verified")
+  capturedAt   DateTime  @default(now()) @map("captured_at") @db.Timestamptz(6)
+  capturedBy   BigInt?   @map("captured_by")
+
+  request   Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  capturedByUser User? @relation(fields: [capturedBy], references: [id], onDelete: SetNull)
+
+  @@map("proof_of_delivery")
+}
+
+model Rating {
+  id        BigInt   @id @default(autoincrement())
+  requestId BigInt   @map("request_id")
+  raterId   BigInt   @map("rater_id")
+  rateeId   BigInt   @map("ratee_id")
+  score     Int      @db.SmallInt
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  request Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  rater   User    @relation("RatingRater", fields: [raterId], references: [id], onDelete: Cascade)
+  ratee   User    @relation("RatingRatee", fields: [rateeId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, raterId])
+  @@index([rateeId])
+  @@map("ratings")
+}
+
+model Notification {
+  id        BigInt           @id @default(autoincrement())
+  userId    BigInt           @map("user_id")
+  type      NotificationType
+  payload   Json
+  readAt    DateTime?        @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+model Session {
+  id           BigInt    @id @default(autoincrement())
+  userId       BigInt    @map("user_id")
+  refreshHash  String    @map("refresh_hash")
+  userAgent    String?   @map("user_agent")
+  ip           String?   @db.Inet
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  actorId    BigInt?  @map("actor_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   BigInt?  @map("entity_id")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
