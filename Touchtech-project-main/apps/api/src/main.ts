@@ -26,7 +26,6 @@ async function bootstrap(): Promise<void> {
 
   const config = app.get(ConfigService);
   const corsOrigins = config.get<string[]>('app.corsOrigins') ?? [];
-  const port = config.get<number>('app.port') ?? 3000;
 
   await app.register(helmet, { contentSecurityPolicy: false });
 
