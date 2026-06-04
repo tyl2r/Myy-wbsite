@@ -9,25 +9,34 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile
 
+RUN apt-get update -y && apt-get install -y openssl
+
 COPY . .
-RUN npx prisma generate
+RUN pnpm exec prisma generate
 RUN pnpm build
 
 # ---- Production stage ----
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
-ENV NODE_ENV=production
-
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
+ENV NODE_ENV=production
+
+# install only production deps
 COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile --prod
+RUN pnpm install --prod --frozen-lockfile
 
+# install openssl again (needed for prisma)
+RUN apt-get update -y && apt-get install -y openssl
+
+# copy built app
 COPY --from=builder /app/dist ./dist
-COPY prisma ./prisma
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/prisma ./prisma
 
-# Run migrations then start the server.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
-
+# expose port (important for Railway)
 EXPOSE 3000
+
+# start app
+CMD ["node", "dist/main.js"]
