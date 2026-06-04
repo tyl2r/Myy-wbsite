@@ -59,6 +59,12 @@ async function bootstrap(): Promise<void> {
 
   app.enableShutdownHooks();
 
+  const server = app.getHttpAdapter().getInstance();
+
+server.get('/api/v1/health', (req, res) => {
+  res.status(200).send({ status: 'ok' });
+});
+
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 
   await app.listen({ port, host: '0.0.0.0' });
